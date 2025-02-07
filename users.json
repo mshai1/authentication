@@ -1,4 +1,8 @@
 {
     "john_doe": "password123",
-    "jane_smith": "securepass"
+    "jane_smith": "securepass",
+    "Jack": "passwordJack123",
+    "john_smith": "scrypt:32768:8:1$29Fa244zdqo6xMZz$d61601bfee501ad4f9ff02e12e7160668fa48de43bf05224f9e3edc4af157d523af4846667c2bc53cb4241afc7f7699b2c33c9ff2dc68cbade652a118283acb4",
+    "jason": "scrypt:32768:8:1$xf4fnqvhQDvPeWJS$84f3e7f23cc8262072cfe64faf971896d4b14f2fd45114cfb780ca362c12208466f8dba2483dbd3c3a978fea5224a85b62b60cc699c53b3797296c0e3cc658cd",
+    "jacob": "scrypt:32768:8:1$CQrnrM0ixNCYeoOl$61fcef97171211adb7958aeb4c2c07223586d5c6765241b6d763e4b823f66bffaed93abdbc5573d94965561f3b9e0f046504f170778be6ed16369a83b8c8824d"
 }
