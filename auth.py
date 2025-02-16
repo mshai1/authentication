@@ -4,16 +4,26 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 import datetime
 from functools import wraps
+from model import db, User
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI']='sqlite:///users.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your_secret_key'
 
+db.init_app(app)
+
+with app.app_context():
+    db.create_all()
+
+
 #Load user from the file
-try:
-    with open('users.json') as file:
-        users = json.load(file)
-except FileNotFoundError:
-    users = {}
+# try:
+#     with open('users.json') as file:
+#         users = json.load(file)
+# except FileNotFoundError:
+#     users = {}
 
 #Define the Token Required Decorator
 def token_required(f):
@@ -48,18 +58,23 @@ def register():
     username = data.get('username')
     password = data.get('password')
 
-    if username in users:
+    if User.query.filter_by(username=username).first():
         return jsonify({'message': 'User already exists'}), 400
     
     #Hash the password before starting it
     hash_password = generate_password_hash(password)
-    users[username] = hash_password
+    # users[username] = hash_password
 
-    with open('users.json', 'w') as file:
-        json.dump(users, file, indent=4)
+    new_user = User(username=username, password=hash_password)
+    db.session.add(new_user)
+    db.session.commit()
+
+    # with open('users.json', 'w') as file:
+    #     json.dump(users, file, indent=4)
 
     return jsonify({'message': 'User created successfully'}), 201
 
+#USER LOGIN
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -67,10 +82,11 @@ def login():
     password = data.get('password')
 
     #Get stored hashed password
-    stored_hashed_password = users[username]
+    #stored_hashed_password = users[username]
+    user = User.query.filter_by(username=username).first()
 
     #Check if the user exists
-    if not stored_hashed_password or not check_password_hash(stored_hashed_password, password):
+    if not user or not check_password_hash(user.password, password):
         return jsonify({'message': 'Invalid username or password'}), 401
     
     #Generate JWT token
@@ -95,6 +111,20 @@ def login():
 def protected_route(current_user):
     return jsonify({'message': f'Hello {current_user}! This is a protected route.'})
     
+#SHOW ALL USERS
+@app.route('/users', methods=['GET'])
+def get_users():
+    users = User.query.all()
+    return jsonify([{'id': user.id, 'username':user.username, 'password': user.password} for user in users])
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+@app.route('/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    jti = get_jwt()['jti']
+    blacklisted_tokens.add(jti)
+    # Invalidate the token (for simplicity, we'll just return a message)
+    return jsonify({'message': 'Successfully logged out'}), 200
                         
