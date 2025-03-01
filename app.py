@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_migrate import Migrate
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 from flask_bcrypt import Bcrypt
@@ -13,6 +14,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your_secret_key'
 
 db.init_app(app)
+migrate = Migrate(app, db)
 bcrypt = Bcrypt(app)
 jwt = JWTManager(app)
 
@@ -137,7 +139,15 @@ def check_if_token_is_revoked(jwt_header, jwt_payload):
 @app.route('/users', methods=['GET'])
 def get_users():
     users = User.query.all()
-    return jsonify([{'id': user.id, 'username':user.username, 'password': user.password} for user in users])
+    return jsonify([
+        {
+            'id': user.id, 
+            'username': user.username, 
+            'password': user.password, 
+            'role': user.role  # Include role
+        } 
+        for user in users
+    ])
 
 if __name__ == '__main__':
     app.run(debug=True)
