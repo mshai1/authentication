@@ -3,10 +3,11 @@ from flask_migrate import Migrate
 from flask_argon2 import Argon2
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
+import random
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 #from functools import wraps
-from model import db, User
+from model import db, User, App, UserApp
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt, get_jwt_identity
 
 app = Flask(__name__)
@@ -25,39 +26,18 @@ jwt_blocklist = set()
 with app.app_context():
     db.create_all()
 
-
-#Load user from the file
-# try:
-#     with open('users.json') as file:
-#         users = json.load(file)
-# except FileNotFoundError:
-#     users = {}
-
-#Define the Token Required Decorator
-# def token_required(f):
-#     @wraps(f)
-#     def decorated(*args, **kwargs):
-#         token = request.headers.get('Authorization')
-
-#         if not token:
-#             return jsonify({'message': 'Token is missing'}), 401
-
-#         parts = token.split(' ')
-#         if len(parts) != 2 or parts[0] != 'Bearer':
-#             return jsonify({'message': 'Invalid token format! Expected: Bearer <token>'}), 401
-
-#         try:
-#             token = parts[1]  # Extract token from "Bearer <token>"
-#             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-#             current_user = data['username']
-#         except jwt.ExpiredSignatureError:
-#             return jsonify({'message': 'Token is expired'}), 401
-#         except jwt.InvalidTokenError:
-#             return jsonify({'message': 'Token is invalid!'}), 401
-
-#         return f(current_user, *args, **kwargs)
-#     return decorated
-
+        # Ensure CoffeeHub app exists
+    if not App.query.filter_by(name='CoffeeHub').first():
+        coffee_hub = App(name='CoffeeHub', app_id=random.randint(1000, 9999))  # Unique app_id
+        db.session.add(coffee_hub)
+        db.session.commit()
+    
+    # Assign all users to CoffeeHub with 'member' role
+    coffee_hub = App.query.filter_by(name='CoffeeHub').first()
+    for user in User.query.all():
+        if not UserApp.query.filter_by(user_id=user.id, app_id=coffee_hub.id).first():
+            db.session.add(UserApp(user_id=user.id, app_id=coffee_hub.id, role='member'))
+    db.session.commit()
 
 # USER REGISTRATION
 @app.route('/register', methods=['POST'])
@@ -102,22 +82,8 @@ def login():
     else:
         return jsonify({'message': 'Invalid username or password'}), 401
     
-    # #Generate JWT token
-    # token = jwt.encode(
-    #     {'username': username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
-    #     app.config['SECRET_KEY'],
-    #     algorithm='HS256'
-    # )
 
-    #Verify the password
-    # if not check_password_hash(stored_hashed_password, password):
-    #     return jsonify({'message': 'Invalid username or password'}), 401
-        # Decode token to string if needed (for Python 3.12+)
-    # if isinstance(token, bytes):
-    #     token = token.decode('utf-8')
-
-    # return jsonify({'token': token})
-
+#LOGOUT
 @app.route('/logout', methods=['POST'])
 @jwt_required()
 def logout():
@@ -125,57 +91,6 @@ def logout():
     jwt_blocklist.add(jti)
     # Invalidate the token (for simplicity, we'll just return a message)
     return jsonify({'message': 'Successfully logged out'}), 200
-
-
-# Protect a Route using JWT
-@app.route('/protected', methods=['GET'])
-@jwt_required()
-def protected_route():
-    current_user = get_jwt_identity()
-    return jsonify({'message': f'Hello {current_user}! This is a protected route.'})
-
-@jwt.token_in_blocklist_loader
-def check_if_token_is_revoked(jwt_header, jwt_payload):
-    return jwt_payload['jti'] in jwt_blocklist  
-
-
-@app.route('/admin', methods=['GET'])
-@jwt_required()
-def admin_panel():
-    current_user = get_jwt_identity()
-    user = User.query.filter_by(username=current_user).first()
-    
-    if user.role != 'admin':
-        return jsonify({'error': 'Access denied'}), 403
-    
-    return jsonify({'message': 'Welcome, Admin!'})
-
-
-@app.route('/update-role', methods=['PATCH'])
-@jwt_required()
-def update_role():
-    current_user = get_jwt_identity()
-    admin = User.query.filter_by(username=current_user).first()
-
-    if not admin or admin.role != 'admin':
-        return jsonify({'message': 'Access denied: Admins only'}), 403
-
-    data = request.get_json()
-    username = data.get('username')
-    new_role = data.get('new_role')
-
-    user = User.query.filter_by(username=username).first()
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-
-    if not new_role:
-        return jsonify({'message': 'Role cannot be empty'}), 400
-
-    user.role = new_role
-    db.session.commit()
-
-    return jsonify({'message': f'User {username} role updated to {new_role}'}), 200
-
 
 #UPDATE USER PASSWORD
 @app.route('/update-password', methods=['PUT'])
@@ -202,6 +117,220 @@ def update_password():
 
     return jsonify({'message': 'Password updated successfully'}), 200
 
+# Protect a Route using JWT
+@app.route('/protected', methods=['GET'])
+@jwt_required()
+def protected_route():
+    current_user = get_jwt_identity()
+    return jsonify({'message': f'Hello {current_user}! This is a protected route.'})
+
+@jwt.token_in_blocklist_loader
+def check_if_token_is_revoked(jwt_header, jwt_payload):
+    return jwt_payload['jti'] in jwt_blocklist  
+
+
+#Show all apps to superadmin and admin and require jwt token
+@app.route('/apps', methods=['GET'])
+@jwt_required()
+def get_apps():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+
+    if user.role == 'superadmin' or user.role == 'admin':
+        apps = App.query.all()
+    else:
+        apps = [user_app.app for user_app in user.user_apps]
+
+    return jsonify([
+        {
+            'id': app.id,
+            'name': app.name,
+            'app_id': app.app_id
+        } 
+        for app in apps
+    ])
+
+
+#Assign User to App
+@app.route('/assign-app', methods=['POST'])
+@jwt_required()
+def assign_app():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    data = request.get_json()
+    username = data.get('username')
+    app_name = data.get('app_name')
+    access_level = data.get('access_level')
+
+    user_to_assign = User.query.filter_by(username=username).first()
+    app = App.query.filter_by(name=app_name).first()
+
+    if not user_to_assign or not app:
+        return jsonify({'message': 'User or app not found'}), 404
+    
+    if not access_level:
+        return jsonify({'message': 'Access level cannot be empty'}), 400
+    
+    if UserApp.query.filter_by(user_id=user_to_assign.id, app_id=app.id).first():
+        return jsonify({'message': 'User already assigned to this app'}), 400
+    
+    #Check if current user is superadmin
+    if user.role != 'superadmin' and access_level == 'admin':
+        return jsonify({'message': 'Access denied: Superadmins or Admin only'}), 403
+    
+    new_user_app = UserApp(user_id=user_to_assign.id, app_id=app.id, access_level=access_level)
+    db.session.add(new_user_app)
+    db.session.commit()
+    return jsonify({'message': f'User {user.username} assigned to {app_name} with {access_level} access'}), 201
+
+#Update User App Access Level
+@app.route('/update-access-level', methods=['PATCH'])
+@jwt_required()
+def update_access_level():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    data = request.get_json()
+    username = data.get('username')
+    app_name = data.get('app_name')
+    new_access_level = data.get('new_access_level')
+
+    user_to_update = User.query.filter_by(username=username).first()
+    app = App.query.filter_by(name=app_name).first()
+
+    if not user_to_update or not app:
+        return jsonify({'message': 'User or app not found'}), 404
+    
+    if not new_access_level:
+        return jsonify({'message': 'Access level cannot be empty'}), 400
+    
+    user_app = UserApp.query.filter_by(user_id=user_to_update.id, app_id=app.id).first()
+    if not user_app:
+        return jsonify({'message': 'User not assigned to this app'}), 404
+    
+    #Check if current user is superadmin
+    if user.role != 'superadmin' or user.role != 'admin' or (user.role == 'admin' and new_access_level == 'admin'):
+        return jsonify({'message': 'Access denied: Superadmins only'}), 403
+    
+    user_app.access_level = new_access_level
+    db.session.commit()
+    return jsonify({'message': f'User {user.username} access level to {app_name} updated to {new_access_level}'}), 200
+
+#Update User App Status
+@app.route('/update-status', methods=['PATCH'])
+@jwt_required()
+def update_status():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    data = request.get_json()
+    username = data.get('username')
+    app_name = data.get('app_name')
+    new_status = data.get('new_status')
+
+    user_to_update = User.query.filter_by(username=username).first()
+    app = App.query.filter_by(name=app_name).first()
+
+    if not user_to_update or not app:
+        return jsonify({'message': 'User or app not found'}), 404
+    
+    if not new_status:
+        return jsonify({'message': 'Status cannot be empty'}), 400
+    
+    user_app = UserApp.query.filter_by(user_id=user_to_update.id, app_id=app.id).first()
+    if not user_app:
+        return jsonify({'message': 'User not assigned to this app'}), 404
+    
+    #Check if current user is superadmin
+    if user.role != 'superadmin':
+        return jsonify({'message': 'Access denied: Superadmins only'}), 403
+    
+    user_app.status = new_status
+    db.session.commit()
+    return jsonify({'message': f'User {user.username} status to {app_name} updated to {new_status}'}), 200
+
+#Remove User from App
+@app.route('/remove-app', methods=['DELETE'])
+@jwt_required()
+def remove_app():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    data = request.get_json()
+    username = data.get('username')
+    app_name = data.get('app_name')
+
+    user_to_remove = User.query.filter_by(username=username).first()
+    app = App.query.filter_by(name=app_name).first()
+
+    if not user_to_remove or not app:
+        return jsonify({'message': 'User or app not found'}), 404
+    
+    user_app = UserApp.query.filter_by(user_id=user_to_remove.id, app_id=app.id).first()
+    if not user_app:
+        return jsonify({'message': 'User not assigned to this app'}), 404
+    
+    #Check if current user is superadmin
+    if user.role != 'superadmin':
+        return jsonify({'message': 'Access denied: Superadmins only'}), 403
+    
+    db.session.delete(user_app)
+    db.session.commit()
+    return jsonify({'message': f'User {user.username} removed from {app_name}'}), 200
+
+#ADMIN PANEL
+@app.route('/admin', methods=['GET'])
+@jwt_required()
+def admin_panel():
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+    
+    if user.role != 'admin':
+        return jsonify({'error': 'Access denied'}), 403
+    
+    return jsonify({'message': 'Welcome, Admin!'})
+
+#UPDATE USER ROLE
+@app.route('/update-role', methods=['PATCH'])
+@jwt_required()
+def update_role():
+    current_user = get_jwt_identity()
+    admin = User.query.filter_by(username=current_user).first()
+
+    #Check if the user is an superadmin
+    if not admin or admin.role != 'superadmin':
+        return jsonify({'message': 'Access denied: Admins only'}), 403
+
+    data = request.get_json()
+    username = data.get('username')
+    new_role = data.get('new_role')
+
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    if not new_role:
+        return jsonify({'message': 'Role cannot be empty'}), 400
+
+    user.role = new_role
+    db.session.commit()
+
+    return jsonify({'message': f'User {username} role updated to {new_role}'}), 200
+
+
 #SHOW ALL USERS
 @app.route('/users', methods=['GET'])
 @jwt_required()
@@ -223,6 +352,31 @@ def get_users():
         } 
         for user in users
     ])
+
+#DELETE USER
+@app.route('/delete-user', methods=['DELETE'])
+@jwt_required()
+def delete_user():
+    current_user = get_jwt_identity()
+    superadmin = User.query.filter_by(username=current_user).first()
+    
+    if not superadmin or superadmin.role != 'superadmin':
+        return jsonify({'message': 'Access denied: Superadmins only'}), 403
+    
+    data = request.get_json()
+    username = data.get('username')
+    user = User.query.filter_by(username=username).first()
+    
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    
+    # Delete all UserApp entries associated with this user
+    UserApp.query.filter_by(user_id=user.id).delete()
+    db.session.delete(user)
+    db.session.commit()
+    
+    return jsonify({'message': f'User {username} and associated data have been deleted'}), 200
+
 
 if __name__ == '__main__':
     app.run(debug=True)
